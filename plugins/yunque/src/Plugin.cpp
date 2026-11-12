@@ -31,7 +31,20 @@ using Coefs = juce::dsp::IIR::Coefficients<float>;
 class YunqueProcessor : public mye::ProcessorBase
 {
 public:
-    YunqueProcessor() : ProcessorBase (layout()) {}
+    YunqueProcessor() : ProcessorBase (layout())
+    {
+        presetActions["kind"] = [this] (int k)
+        {
+            struct P { float heat, asym, shape, low, high; };
+            const P presets[] { { 14, 45, 0, 1, -1 },      // Válvula: warm, even harmonics
+                                { 10, 10, 30, 2, -2 },     // Cinta: highs squashed, head bump
+                                { 16, 5, -50, 2, 0 },      // Transformador: iron lows
+                                { 20, 20, 20, -2, 2 } };   // Fragua: metallic folding
+            const auto& pr = presets[juce::jlimit (0, 3, k)];
+            setParam ("heat", pr.heat); setParam ("asym", pr.asym); setParam ("shape", pr.shape);
+            setParam ("low", pr.low); setParam ("high", pr.high);
+        };
+    }
     const juce::String getName() const override { return "MYE Yunque"; }
     double getTailLengthSeconds() const override { return 0.0; }
 
@@ -64,7 +77,8 @@ public:
 
         const int kind = (int) p ("kind");
         const float drive = mye::dbToGain (p ("heat"));
-        const float shapeDb = p ("shape") / 100.0f * 9.0f;
+        const float materialTilt[] { 0.0f, 6.0f, -6.0f, 0.0f };   // tape saturates highs, transformer saturates lows
+        const float shapeDb = juce::jlimit (-15.0f, 15.0f, p ("shape") / 100.0f * 9.0f + materialTilt[juce::jlimit (0, 3, kind)]);
         const float bias = p ("asym") / 100.0f * 0.6f;
         const float mix = p ("mix") / 100.0f;
         const float out = mye::dbToGain (p ("output"));
@@ -75,8 +89,11 @@ public:
         auto hsPre = Coefs::makeHighShelf (sr, 800.0, 0.7f, mye::dbToGain (shapeDb));
         auto lsPost = Coefs::makeLowShelf (sr, 800.0, 0.7f, mye::dbToGain (shapeDb));
         auto hsPost = Coefs::makeHighShelf (sr, 800.0, 0.7f, mye::dbToGain (-shapeDb));
-        auto lowC = Coefs::makeLowShelf (sr, 120.0, 0.7f, mye::dbToGain (p ("low")));
-        auto highC = Coefs::makeHighShelf (sr, 6000.0, 0.7f, mye::dbToGain (p ("high")));
+        // material voicing: tape head bump + soft top, valve slight warmth, forge a bit of bite
+        const float bumpDb[] { 0.5f, 2.5f, 1.0f, -1.0f }, topDb[] { -1.0f, -2.5f, 0.0f, 1.5f };
+        const int ki = juce::jlimit (0, 3, kind);
+        auto lowC = Coefs::makeLowShelf (sr, kind == tapeK ? 90.0 : 120.0, 0.7f, mye::dbToGain (p ("low") + bumpDb[ki]));
+        auto highC = Coefs::makeHighShelf (sr, 6000.0, 0.7f, mye::dbToGain (p ("high") + topDb[ki]));
         for (int c = 0; c < 2; ++c)
         {
             *preLo[c].coefficients = *lsPre;  *preHi[c].coefficients = *hsPre;
@@ -175,7 +192,7 @@ private:
     {
         switch (kind)
         {
-            case valve: return std::tanh (x + bias);                                     // smooth, even harmonics via bias
+            case valve: { const float y = x + bias; return y > 0.0f ? std::tanh (y) : std::tanh (y * 0.6f) / 0.6f * 0.75f; } // asymmetric like a triode: even harmonics
             case tapeK: { const float y = x + bias * 0.5f; return y / (1.0f + std::abs (y)) * 1.3f; } // softer knee, compresses
             case forge: { const float y = x + bias; return std::sin (juce::MathConstants<float>::halfPi * juce::jlimit (-12.0f, 12.0f, y)); } // folds: metallic
             default:    return std::tanh (x);

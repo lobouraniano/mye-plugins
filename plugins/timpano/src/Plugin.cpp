@@ -8,7 +8,7 @@ namespace
 {
 enum Group { through, device, body };
 enum Dist { none, soft, hard, crush };
-enum Noise { quiet, hiss, hum, crackle };
+enum Noise { quiet, hiss, hum, radio, walkie, phone };
 
 struct Scene
 {
@@ -30,11 +30,11 @@ const Scene scenes[] = {
     { "Bajo el agua",         through, 40,   420,  true,  250, 6, 1.0f, 0, 0, 1,     0.5f, none, 0,    0,    0.80f, 0.50f, quiet, 0,    -6,  0,    true  },
     // ---- por un aparato
     { "Parlante de celular",  device,  600,  7000, true,  1000,5, 1.5f, 2800,4, 2.0f, 1.0f, soft, 0.5f, 0.3f, 0.00f, 0.00f, quiet, 0,    -3,  0,    false },
-    { "Llamada telefónica",   device,  300,  3400, true,  1500,3, 1.0f, 0, 0, 1,     1.0f, crush,0.5f, 0.7f, 0.00f, 0.00f, hiss,  0.3f, -3,  0,    false },
-    { "Radio AM",             device,  150,  4500, true,  1200,3, 1.0f, 0, 0, 1,     1.0f, soft, 0.4f, 0.6f, 0.00f, 0.00f, crackle,0.6f,-4, 0,    false },
-    { "Walkie-talkie",        device,  400,  2800, true,  1800,5, 1.5f, 0, 0, 1,     1.0f, hard, 0.7f, 0.9f, 0.00f, 0.00f, crackle,0.7f,-2, 0,    false },
+    { "Llamada telefónica",   device,  300,  3400, true,  1500,3, 1.0f, 0, 0, 1,     1.0f, crush,0.5f, 0.7f, 0.00f, 0.00f, phone, 0.5f, -3,  0,    false },
+    { "Radio AM",             device,  150,  4500, true,  1200,3, 1.0f, 0, 0, 1,     1.0f, soft, 0.4f, 0.6f, 0.00f, 0.00f, radio, 0.6f, -4, 0,    false },
+    { "Walkie-talkie",        device,  400,  2800, true,  1800,5, 1.5f, 0, 0, 1,     1.0f, hard, 0.7f, 0.9f, 0.00f, 0.00f, walkie,0.7f, -2, 0,    false },
     { "Megáfono",             device,  500,  3800, true,  1500,8, 2.0f, 3000,4, 2.0f, 1.0f, hard, 0.6f, 0.5f, 0.80f, 0.35f, quiet, 0,    -2,  0,    false },
-    { "TV de al lado",        device,  120,  1800, true,  500, 4, 1.0f, 2500,2, 1.5f, 1.0f, soft, 0.2f, 0.5f, 0.40f, 0.45f, hum,   0.3f, -10, 0,    false },
+    { "TV de al lado",        device,  120,  1800, true,  500, 4, 1.0f, 2500,2, 1.5f, 1.0f, soft, 0.2f, 0.5f, 0.40f, 0.45f, hum,   0.5f, -10, 0,    false },
     { "Auriculares ajenos",   device,  1500, 9000, false, 3000,6, 1.5f, 0, 0, 1,     0.7f, soft, 0.3f, 0.3f, 0.00f, 0.00f, quiet, 0,    -16, 0,    false },
     // ---- en el cuerpo
     { "Aturdido",             body,    20,   700,  true,  0,   0, 1.0f, 0, 0, 1,     0.3f, none, 0,    0,    0.30f, 0.20f, quiet, 0,    -6,  0.6f, false },
@@ -70,7 +70,22 @@ float lerp (float a, float b, float t) { return a + (b - a) * t; }
 class TimpanoProcessor : public mye::ProcessorBase
 {
 public:
-    TimpanoProcessor() : ProcessorBase (layout()) {}
+    TimpanoProcessor() : ProcessorBase (layout())
+    {
+        // picking a scene moves the shared knobs to that scene's starting point
+        presetActions["scene"] = [this] (int sc)
+        {
+            struct P { float distance, material, space, defect, tinnitus, pulse; };
+            const P presets[] {
+                { 20, 40, 50, 50, 0, 0 },  { 30, 70, 50, 50, 0, 0 },  { 40, 50, 60, 50, 0, 0 },  { 40, 50, 60, 50, 0, 0 },
+                { 30, 60, 30, 50, 0, 0 },  { 30, 50, 60, 50, 0, 15 }, { 10, 40, 0, 50, 0, 0 },   { 0, 40, 0, 50, 0, 0 },
+                { 0, 35, 0, 60, 0, 0 },    { 0, 30, 0, 60, 0, 0 },    { 40, 40, 60, 60, 0, 0 },  { 40, 50, 50, 50, 0, 0 },
+                { 20, 50, 0, 40, 0, 0 },   { 20, 60, 40, 30, 60, 30 },{ 0, 50, 0, 0, 0, 20 },    { 0, 50, 0, 0, 0, 40 } };
+            const auto& pr = presets[juce::jlimit (0, numScenes - 1, sc)];
+            setParam ("distance", pr.distance); setParam ("material", pr.material); setParam ("space", pr.space);
+            setParam ("defect", pr.defect); setParam ("tinnitus", pr.tinnitus); setParam ("pulse", pr.pulse);
+        };
+    }
     const juce::String getName() const override { return "MYE Timpano"; }
     double getTailLengthSeconds() const override { return 3.0; }
 
@@ -154,6 +169,13 @@ public:
             const float mid = 0.5f * (l0 + r0);
             x[0] = lerp (l0, mid, s.mono); x[1] = lerp (r0, mid, s.mono);
 
+            if (s.noise != quiet && noiseAmt > 0.0f)
+            {
+                float sigGain = 1.0f;
+                const float nz = noiseSample (s.noise, noiseAmt, std::abs (mid), sigGain);
+                for (int c = 0; c < nch; ++c) x[c] = x[c] * sigGain + nz;
+            }
+
             for (int c = 0; c < nch; ++c)
             {
                 float y = hp1[c].processSample (x[c]);
@@ -210,25 +232,13 @@ public:
         }
 
         // noise of the medium + body sounds
-        const float tin = juce::jlimit (0.0f, 1.0f, p ("tinnitus") / 100.0f + s.tinnitus * transSm.getTargetValue());
+        const float tin = juce::jlimit (0.0f, 1.0f, p ("tinnitus") / 100.0f);
         const float pulse = p ("pulse") / 100.0f;
         const double beatInc = p ("pulsebpm") / 60.0 / sr;
         constexpr double twoPi = juce::MathConstants<double>::twoPi;
         for (int i = 0; i < n; ++i)
         {
             float add = 0.0f;
-            if (noiseAmt > 0.0f)
-            {
-                if (s.noise == hiss) add += noiseAmt * 0.004f * (rng.nextFloat() * 2.0f - 1.0f);
-                else if (s.noise == hum) { humPh = std::fmod (humPh + 50.0 / sr, 1.0); add += noiseAmt * 0.006f * (float) (std::sin (twoPi * humPh) + 0.5 * std::sin (3 * twoPi * humPh)); }
-                else if (s.noise == crackle)
-                {
-                    add += noiseAmt * 0.005f * (rng.nextFloat() * 2.0f - 1.0f);
-                    if (rng.nextFloat() < 0.0004f * noiseAmt) crackleEnv = 0.25f * noiseAmt;
-                    add += crackleEnv * (rng.nextFloat() * 2.0f - 1.0f);
-                    crackleEnv *= 0.995f;
-                }
-            }
             if (tin > 0.0f)
             {
                 tinPh = std::fmod (tinPh + 6200.0 / sr, 1.0); tinPh2 = std::fmod (tinPh2 + 6207.0 / sr, 1.0);
@@ -266,6 +276,98 @@ public:
     }
 
 private:
+    // ------------------------------------------------------------------ noise of the medium
+    float white() { return rng.nextFloat() * 2.0f - 1.0f; }
+
+    float pink()  // Paul Kellet's economy pink filter
+    {
+        const float w = white();
+        pk[0] = 0.99765f * pk[0] + w * 0.0990460f;
+        pk[1] = 0.96300f * pk[1] + w * 0.2965164f;
+        pk[2] = 0.57000f * pk[2] + w * 1.0526913f;
+        return (pk[0] + pk[1] + pk[2] + w * 0.1848f) * 0.12f;
+    }
+
+    // slow random walk 0..1 (signal fading, drifting whistle)
+    float wander (float& v, float& target, int& count, float seconds)
+    {
+        if (--count <= 0) { target = rng.nextFloat(); count = (int) (sr * seconds * (0.5f + rng.nextFloat())); }
+        v += (target - v) * (1.0f / (float) (sr * seconds * 0.5));
+        return v;
+    }
+
+    float noiseSample (Noise type, float amt, float inLevel, float& sigGain)
+    {
+        constexpr double twoPi = juce::MathConstants<double>::twoPi;
+        switch (type)
+        {
+            case hiss: return amt * 0.01f * pink();
+
+            case hum:  // mains hum: 50 Hz + harmonics, rectifier buzz on the even ones, slow breathing
+            {
+                humPh = std::fmod (humPh + 50.0 / sr, 1.0);
+                const float breathe = 0.85f + 0.15f * wander (fadeV, fadeT, fadeC, 3.0f);
+                float h = 0.0f;
+                for (int k = 1; k <= 14; ++k)
+                    h += (float) std::sin (twoPi * humPh * k) * (k % 2 == 0 ? 0.9f : 0.45f) / std::pow ((float) k, 1.1f);
+                return amt * breathe * (0.012f * h + 0.002f * pink());
+            }
+
+            case radio:  // AM: fading, static bursts, pops, heterodyne whistle
+            {
+                const float fade = wander (fadeV, fadeT, fadeC, 1.5f);
+                sigGain = 1.0f - 0.55f * amt * fade * fade;
+                float o = amt * (0.006f + 0.014f * fade) * pink();
+                // static: bursts of crackle (5-60 ms), a few per second
+                if (burstLeft <= 0 && rng.nextFloat() < (0.6f + 2.5f * amt) / (float) sr)
+                {
+                    burstLeft = (int) (sr * (0.005 + 0.055 * rng.nextFloat()));
+                    burstAmp = amt * (0.05f + 0.25f * rng.nextFloat());
+                }
+                if (burstLeft > 0)
+                {
+                    --burstLeft;
+                    if (rng.nextFloat() < 0.25f) o += burstAmp * white();
+                    burstAmp *= 0.9993f;
+                }
+                if (rng.nextFloat() < 0.4f * amt / (float) sr) popEnv = amt * 0.35f;    // single pops
+                o += popEnv * white(); popEnv *= 0.97f;
+                // heterodyne whistle drifting slowly between ~0.9 and 2.4 kHz
+                const float wf = 900.0f + 1500.0f * wander (whV, whT, whC, 6.0f);
+                whPh = std::fmod (whPh + wf / sr, 1.0);
+                o += amt * 0.0025f * (float) std::sin (twoPi * whPh);
+                return o;
+            }
+
+            case walkie:  // squelch "kssht" when the signal opens and closes + band hiss
+            {
+                inEnv += (inLevel > inEnv ? 0.01f : 0.0005f) * (inLevel - inEnv);
+                const bool open = inEnv > 0.02f;
+                if (open != squelchOpen)
+                {
+                    squelchOpen = open;
+                    squelchLeft = (int) (sr * (open ? 0.06 : 0.16));
+                    squelchAmp = amt * (open ? 0.12f : 0.22f);
+                }
+                float o = amt * 0.004f * white() * (squelchOpen ? 1.0f : 0.25f);
+                if (squelchLeft > 0) { --squelchLeft; o += squelchAmp * white(); squelchAmp *= 0.9997f; }
+                if (rng.nextFloat() < 1.5f * amt / (float) sr) popEnv = amt * 0.15f;
+                o += popEnv * white(); popEnv *= 0.96f;
+                return o;
+            }
+
+            case phone:  // line hiss + digital dropouts
+            {
+                if (dropLeft <= 0 && rng.nextFloat() < 0.25f * amt / (float) sr)
+                    dropLeft = (int) (sr * (0.03 + 0.09 * rng.nextFloat()));
+                if (dropLeft > 0) { --dropLeft; sigGain = 0.05f; }
+                return amt * 0.03f * pink();
+            }
+
+            default: return 0.0f;
+        }
+    }
+
     // "lub-dub": two low decaying thumps per beat
     static float heartbeat (double ph, double beatSec)
     {
@@ -284,7 +386,11 @@ private:
     juce::AudioBuffer<float> wet, room;
     juce::SmoothedValue<float> transSm;
     juce::Random rng;
-    float env = 0, holdCount = 0, holdVal[2] {}, crackleEnv = 0;
+    float env = 0, holdCount = 0, holdVal[2] {};
+    float pk[3] {}, fadeV = 0, fadeT = 0, whV = 0.5f, whT = 0.5f, burstAmp = 0, popEnv = 0, inEnv = 0, squelchAmp = 0;
+    int fadeC = 0, whC = 0, burstLeft = 0, squelchLeft = 0, dropLeft = 0;
+    bool squelchOpen = false;
+    double whPh = 0;
     double wobPh = 0, tinPh = 0, tinPh2 = 0, beatPh = 0, humPh = 0;
     int lastScene = -1;
 };

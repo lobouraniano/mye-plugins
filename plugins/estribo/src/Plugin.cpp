@@ -57,7 +57,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout()
 class EstriboProcessor : public mye::ProcessorBase
 {
 public:
-    EstriboProcessor() : ProcessorBase (layout()) {}
+    EstriboProcessor() : ProcessorBase (layout())
+    {
+        // picking a character mode moves the knobs to a starting point for that mode
+        presetActions["mode"] = [this] (int m)
+        {
+            struct P { float character, tone, lowcut; };
+            const P presets[] { { 0, 14000, 40 }, { 50, 6000, 120 }, { 35, 8000, 80 }, { 50, 5000, 100 },
+                                { 65, 3800, 150 }, { 80, 2800, 250 }, { 60, 9000, 100 } };
+            const auto& pr = presets[juce::jlimit (0, 6, m)];
+            setParam ("character", pr.character); setParam ("tone", pr.tone); setParam ("lowcut", pr.lowcut);
+        };
+    }
     const juce::String getName() const override { return "MYE Estribo"; }
     double getTailLengthSeconds() const override { return 8.0; }
 

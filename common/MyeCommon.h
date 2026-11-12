@@ -21,6 +21,20 @@ public:
 
     float p (const char* id) const { return apvts.getRawParameterValue (id)->load(); }
 
+    // set a parameter (plain value) as a host-visible gesture; message thread only
+    void setParam (const char* id, float plain)
+    {
+        if (auto* prm = apvts.getParameter (id))
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
+            prm->endChangeGesture();
+        }
+    }
+
+    // presets: called when the USER picks an item in a selector (not on automation / session load)
+    std::map<juce::String, std::function<void (int)>> presetActions;
+
     bool isBusesLayoutSupported (const BusesLayout& l) const override
     {
         const auto in = l.getMainInputChannelSet(), out = l.getMainOutputChannelSet();
@@ -233,9 +247,16 @@ protected:
     ProcessorBase& proc;
 
 private:
+    struct UserCombo : juce::ComboBox
+    {
+        void showPopup() override { pickedAt = juce::Time::getMillisecondCounter(); ComboBox::showPopup(); }
+        bool userIsPicking() const { return pickedAt != 0 && juce::Time::getMillisecondCounter() - pickedAt < 120000; }
+        juce::uint32 pickedAt = 0;
+    };
+
     struct Ctl
     {
-        juce::Slider slider; juce::Label label; juce::ToggleButton toggle; juce::ComboBox combo;
+        juce::Slider slider; juce::Label label; juce::ToggleButton toggle; UserCombo combo;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sa;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> ba;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ca;
@@ -291,6 +312,21 @@ private:
             c->combo.setTooltip (it.label);
             addAndMakeVisible (c->combo);
             c->ca = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, it.id, c->combo);
+            auto* combo = &c->combo;
+            const auto id = it.id;
+            c->combo.onChange = [this, combo, id]
+            {
+                if (! combo->userIsPicking()) return;      // ignore automation / state restore
+                combo->pickedAt = 0;
+                auto a = proc.presetActions.find (id);
+                if (a != proc.presetActions.end())
+                {
+                    const int idx = combo->getSelectedItemIndex();
+                    auto fn = a->second;
+                    // after the attachment has written the selector value
+                    juce::MessageManager::callAsync ([fn, idx] { fn (idx); });
+                }
+            };
         }
         controls[it.id] = c.get();
         owned.push_back (std::move (c));

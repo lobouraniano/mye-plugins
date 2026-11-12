@@ -67,9 +67,42 @@ static int run (const char* name, juce::AudioProcessor* (*make)())
     return failures;
 }
 
+static void noiseReport()
+{
+    // Timpano: level of the medium's noise vs the signal, per noisy scene
+    const int scenesToCheck[] { 7, 8, 9, 11 };
+    for (int sc : scenesToCheck)
+    {
+        std::unique_ptr<juce::AudioProcessor> p (createTimpano());
+        p->prepareToPlay (48000.0, 512);
+        auto* prm = p->getParameters()[0];                      // scene
+        prm->setValueNotifyingHost (sc / 15.0f);
+        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m;
+        double sig = 0, sil = 0; long ns = 0, nq = 0; double ph = 0;
+        for (int k = 0; k < 48000 * 6 / 512; ++k)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const double t = (k * 512 + i) / 48000.0;
+                const float x = t < 3.0 ? 0.3f * (float) std::sin (ph += 6.2831853 * 440.0 / 48000.0) * (std::fmod (t, 0.5) < 0.3 ? 1.0f : 0.0f) : 0.0f;
+                b.setSample (0, i, x); b.setSample (1, i, x);
+            }
+            p->processBlock (b, m);
+            for (int i = 0; i < 512; ++i)
+            {
+                const double t = (k * 512 + i) / 48000.0; const float v = b.getSample (0, i);
+                if (t > 0.5 && t < 3.0) { sig += v * v; ++ns; } else if (t > 4.0) { sil += v * v; ++nq; }
+            }
+        }
+        printf ("Timpano scene %2d: signal %.1f dB, noise alone %.1f dB\n", sc,
+                juce::Decibels::gainToDecibels ((float) std::sqrt (sig / ns)), juce::Decibels::gainToDecibels ((float) std::sqrt (sil / nq)));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
+    noiseReport();
     int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Timpano", createTimpano);
     printf (f == 0 ? "ALL OK\n" : "FAILURES: %d\n", f);
     return f == 0 ? 0 : 1;
