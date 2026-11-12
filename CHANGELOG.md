@@ -13,7 +13,8 @@ Versiones A.B.C por componente — A: versión definitiva (hoy 0) · B: actualiz
 ## Yunque
 - **0.1.0** (2026-11-12) — Saturación con cuatro materiales (Válvula, Cinta, Transformador, Fragua), Calor, Asimetría, Forma (dónde cae el calor), Grave, Brillo, Mezcla, Salida, Auto nivel. Oversampling 4x.
 
-## Oído (nombre de trabajo)
+## Tímpano (antes Oído)
+- **0.1.1** (2026-11-12) — Cambio de nombre: Oído pasa a llamarse Tímpano.
 - **0.1.0** (2026-11-12) — Puntos de escucha: 16 escenas (a través de algo / por un aparato / en el cuerpo), Distancia, Material/calidad, Espacio, Defecto, Transición, Acúfeno, Pulso.
 
 ## Freesound MCP

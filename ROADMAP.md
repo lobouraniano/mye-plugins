@@ -1,6 +1,6 @@
 # M.Y.E. plugins — hoja de ruta (decidido con Carlos, 2026-11-12)
 
-**Estado:** Estribo 0.2.0, Martillo 0.1.0, Yunque 0.1.0 y Oído 0.1.0 implementados (2026-11-12), esperando prueba de oído de Carlos.
+**Estado:** Estribo 0.2.0, Martillo 0.1.0, Yunque 0.1.0 y Tímpano (ex Oído) 0.1.1 implementados (2026-11-12), esperando prueba de oído de Carlos.
 
 ## Reglas
 - Versiones A.B.C por componente: A = versión definitiva (hoy 0), B = actualización sustancial, C = cambios menores. Cada cambio sube versión y se anota en CHANGELOG.md.
@@ -19,7 +19,7 @@ Gain, Peak Reduction, Compress/Limit, Énfasis HF en la detección (en el origin
 ### Yunque 0.1.0 — saturación / forja
 Calor (drive), Tipo (Válvula, Cinta, Transformador, Fragua=wavefolder metálico), Forma (pre/de-énfasis tilt: dónde satura), Asimetría (armónicos pares), Grave, Brillo, Mezcla, Salida, auto-gain. Oversampling.
 
-## Oído 0.1.0 (nombre de trabajo; a Carlos no lo convence — proponer alternativas, ej. "Tímpano", "Umbral", "Membrana")
+## Tímpano (antes "Oído"; nombre elegido por Carlos)
 Puntos de escucha: el sonido como se oye desde algún lugar/aparato/cuerpo. Capas: filtro de transmisión + resonancia del objeto + espacio del otro lado + defecto (distorsión/compresión/ruido).
 Escenas: A través de algo (puerta, pared, ventana, auto desde afuera, otra habitación, bajo el agua) · Por un aparato (parlante de celular, llamada telefónica, radio AM, walkie-talkie, megáfono, TV de al lado, auriculares ajenos) · En el cuerpo (aturdido, oído tapado, acúfeno, pulso propio, adentro de la cabeza).
 Controles comunes: Escena, Distancia, Material/Calidad, Espacio, Defecto, TRANSICIÓN (fader de normal → punto de escucha, para automatizar en montaje), Acúfeno, Pulso, Salida. Uso cotidiano incluido.

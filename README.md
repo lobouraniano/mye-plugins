@@ -8,7 +8,7 @@ Built with JUCE (VST3 / AU / Standalone). Mac builds: see Releases (`latest`).
 | **Estribo** | Delay estéreo con modos de carácter (Limpio, Cinta, Analog 1–4, LoFi), ping-pong, freeze, modulación, auto-pan |
 | **Martillo** | Compresor óptico clásico con énfasis HF y válvula |
 | **Yunque** | Saturación / forja: Válvula, Cinta, Transformador, Fragua |
-| **Oído** *(nombre de trabajo)* | Puntos de escucha: a través de algo, por un aparato, en el cuerpo |
+| **Tímpano** | Puntos de escucha: a través de algo, por un aparato, en el cuerpo |
 
 Versiones y cambios: `CHANGELOG.md`. Plan: `ROADMAP.md`.
 

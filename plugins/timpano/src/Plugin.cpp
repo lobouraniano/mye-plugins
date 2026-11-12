@@ -1,4 +1,4 @@
-// MYE Oído (working name) — listening points.
+// MYE Tímpano — listening points: everything we hear passes through a membrane.
 // The sound as heard *from* somewhere: through an object, through a device, or
 // from inside the body. Each scene = transmission filter + object resonance +
 // the space on the other side + the defect (distortion / compression / noise).
@@ -67,11 +67,11 @@ using Coefs = juce::dsp::IIR::Coefficients<float>;
 float lerp (float a, float b, float t) { return a + (b - a) * t; }
 } // namespace
 
-class OidoProcessor : public mye::ProcessorBase
+class TimpanoProcessor : public mye::ProcessorBase
 {
 public:
-    OidoProcessor() : ProcessorBase (layout()) {}
-    const juce::String getName() const override { return "MYE Oido"; }
+    TimpanoProcessor() : ProcessorBase (layout()) {}
+    const juce::String getName() const override { return "MYE Timpano"; }
     double getTailLengthSeconds() const override { return 3.0; }
 
     void prepareToPlay (double sampleRate, int block) override
@@ -255,7 +255,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override
     {
         using K = mye::SectionEditor::Kind;
-        return new mye::SectionEditor (*this, mye::utf8 ("OÍDO"), mye::utf8 ("M.Y.E. · puntos de escucha"),
+        return new mye::SectionEditor (*this, mye::utf8 ("TÍMPANO"), mye::utf8 ("M.Y.E. · puntos de escucha"),
         {
             { "ESCENA", { { "transition", mye::utf8 ("Transición"), K::knob }, { "scene", "", K::choice } }, 2 },
             { "LUGAR",  { { "distance", "Distancia", K::knob }, { "material", "Material / calidad", K::knob },
@@ -289,7 +289,7 @@ private:
     int lastScene = -1;
 };
 
-juce::AudioProcessor* createOido() { return new OidoProcessor(); }
+juce::AudioProcessor* createTimpano() { return new TimpanoProcessor(); }
 #ifndef MYE_TEST
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new OidoProcessor(); }
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new TimpanoProcessor(); }
 #endif

@@ -1,7 +1,7 @@
 // Offline torture test: random parameter sets, several signals, mono and stereo.
 #include "MyeCommon.h"
 juce::AudioProcessor* createEstribo(); juce::AudioProcessor* createMartillo();
-juce::AudioProcessor* createYunque();  juce::AudioProcessor* createOido();
+juce::AudioProcessor* createYunque();  juce::AudioProcessor* createTimpano();
 
 static int run (const char* name, juce::AudioProcessor* (*make)())
 {
@@ -70,7 +70,7 @@ static int run (const char* name, juce::AudioProcessor* (*make)())
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
-    int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Oido", createOido);
+    int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Timpano", createTimpano);
     printf (f == 0 ? "ALL OK\n" : "FAILURES: %d\n", f);
     return f == 0 ? 0 : 1;
 }

@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  PLUGINS: "Estribo Martillo Yunque Oido"
+  PLUGINS: "Estribo Martillo Yunque Timpano"
 
 jobs:
   mac:
