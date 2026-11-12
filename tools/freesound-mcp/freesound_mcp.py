@@ -22,6 +22,8 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+__version__ = "0.1.0"
+
 API = "https://freesound.org/apiv2"
 API_KEY = os.environ.get("FREESOUND_API_KEY", "")
 CLIENT_ID = os.environ.get("FREESOUND_CLIENT_ID", "")
@@ -36,7 +38,7 @@ LICENSE_FILTERS = {
     "commercial_ok": '-license:"Attribution NonCommercial" -license:"Attribution Noncommercial" -license:"Sampling+"',
 }
 
-mcp = FastMCP("freesound")
+mcp = FastMCP(f"freesound (MYE v{__version__})")
 
 
 # ---------- helpers ----------

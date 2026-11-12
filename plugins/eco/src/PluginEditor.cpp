@@ -83,6 +83,9 @@ void EcoEditor::paint (juce::Graphics& g)
     g.setColour (ink);
     g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
     g.drawText ("ECO", 24, 14, 200, 32, juce::Justification::left);
+    g.setColour (ink.withAlpha (0.4f));
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText ("v" JucePlugin_VersionString, 86, 26, 80, 16, juce::Justification::left);
     g.setColour (ink.withAlpha (0.45f));
     g.setFont (juce::FontOptions (12.0f));
     g.drawText (juce::String::fromUTF8 ("M.Y.E.  \u2014  martillo \u00b7 yunque \u00b7 estribo"), getWidth() - 324, 22, 300, 20, juce::Justification::right);

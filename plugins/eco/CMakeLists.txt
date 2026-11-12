@@ -1,4 +1,7 @@
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ECO_VERSION LIMIT_COUNT 1)
+
 juce_add_plugin(Eco
+    VERSION ${ECO_VERSION}
     COMPANY_NAME "M.Y.E."
     COMPANY_WEBSITE "https://luppi.cargo.site/"
     BUNDLE_ID "com.mye.eco"
