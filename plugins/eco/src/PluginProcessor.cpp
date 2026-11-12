@@ -69,10 +69,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout EcoProcessor::createLayout()
 
 bool EcoProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    const auto in  = layouts.getMainInputChannelSet();
     const auto out = layouts.getMainOutputChannelSet();
-    if (out != juce::AudioChannelSet::stereo() && out != juce::AudioChannelSet::mono())
-        return false;
-    return layouts.getMainInputChannelSet() == out;
+    const auto mono = juce::AudioChannelSet::mono(), stereo = juce::AudioChannelSet::stereo();
+    // mono->mono, stereo->stereo, and mono->stereo (so pan/ping-pong work on mono sources)
+    return (in == mono && out == mono) || (in == stereo && out == stereo) || (in == mono && out == stereo);
 }
 
 void EcoProcessor::prepareToPlay (double sampleRate, int)
@@ -128,6 +129,9 @@ void EcoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+    // mono in, stereo out: duplicate the input so both sides start equal
+    if (getTotalNumInputChannels() == 1 && buffer.getNumChannels() > 1)
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
     const int numCh = juce::jmin (2, buffer.getNumChannels());
     if (numCh == 0 || bufferSize == 0) return;
 

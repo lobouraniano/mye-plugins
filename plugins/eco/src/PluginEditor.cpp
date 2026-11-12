@@ -41,7 +41,7 @@ EcoEditor::EcoEditor (EcoProcessor& p) : AudioProcessorEditor (&p), proc (p)
     addChoice ("division", "DIVISION");
     addChoice ("pantarget", "PAN");
 
-    setSize (720, 470);
+    setSize (780, 470);
 }
 
 void EcoEditor::addKnob (const juce::String& id, const juce::String& name)
@@ -85,7 +85,7 @@ void EcoEditor::paint (juce::Graphics& g)
     g.drawText ("ECO", 24, 14, 200, 32, juce::Justification::left);
     g.setColour (ink.withAlpha (0.45f));
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("M.Y.E.  —  martillo · yunque · estribo", getWidth() - 324, 22, 300, 20, juce::Justification::right);
+    g.drawText (juce::String::fromUTF8 ("M.Y.E.  \u2014  martillo \u00b7 yunque \u00b7 estribo"), getWidth() - 324, 22, 300, 20, juce::Justification::right);
     g.setColour (accent.withAlpha (0.6f));
     g.drawHorizontalLine (56, 24.0f, (float) getWidth() - 24.0f);
 }
@@ -96,11 +96,11 @@ void EcoEditor::resized()
 
     auto bar = area.removeFromBottom (36);
     for (auto* t : toggles)
-        t->button.setBounds (bar.removeFromLeft (110).reduced (2));
+        t->button.setBounds (bar.removeFromLeft (100).reduced (2));
     for (auto* c : choices)
     {
-        c->label.setBounds (bar.removeFromLeft (70));
-        c->box.setBounds (bar.removeFromLeft (110).reduced (2, 6));
+        c->label.setBounds (bar.removeFromLeft (64));
+        c->box.setBounds (bar.removeFromLeft (130).reduced (2, 6));
         bar.removeFromLeft (10);
     }
 
