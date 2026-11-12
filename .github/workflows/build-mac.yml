@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   mac:
     runs-on: macos-latest
@@ -25,9 +28,11 @@ jobs:
           codesign --force --deep -s - "dist/VST3/MYE Eco.vst3"
           codesign --force --deep -s - "dist/Components/MYE Eco.component"
           cp INSTALL.md dist/
-          cd dist && zip -r ../MYE-Eco-mac.zip .
+          ditto -c -k --sequesterRsrc --keepParent dist MYE-Eco-mac.zip
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MYE-Eco-mac
-          path: MYE-Eco-mac.zip
+      - name: Publish as the 'latest' release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest MYE-Eco-mac.zip --title "MYE plugins (latest build)" --notes "Build automático desde main. Instrucciones en INSTALL.md dentro del zip." --latest
