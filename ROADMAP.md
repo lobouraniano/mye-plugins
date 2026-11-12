@@ -1,5 +1,7 @@
 # M.Y.E. plugins — hoja de ruta (decidido con Carlos, 2026-11-12)
 
+**Estado:** Estribo 0.2.0, Martillo 0.1.0, Yunque 0.1.0 y Oído 0.1.0 implementados (2026-11-12), esperando prueba de oído de Carlos.
+
 ## Reglas
 - Versiones A.B.C por componente: A = versión definitiva (hoy 0), B = actualización sustancial, C = cambios menores. Cada cambio sube versión y se anota en CHANGELOG.md.
 - Corrección pendiente: Eco "0.2.0" debió ser 0.1.1 (fix mono→estéreo + UI). Si existe el release `eco-v0.2.0`, borrarlo/renombrar.

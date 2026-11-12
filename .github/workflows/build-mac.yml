@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PLUGINS: "Estribo Martillo Yunque Oido"
+
 jobs:
   mac:
     runs-on: macos-latest
@@ -18,30 +21,52 @@ jobs:
         run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
-        run: cmake --build build --config Release --target Eco_VST3 Eco_AU -- -quiet
+        run: |
+          TARGETS=""
+          for P in $PLUGINS; do TARGETS="$TARGETS ${P}_VST3 ${P}_AU"; done
+          cmake --build build --config Release --target $TARGETS -- -quiet
 
-      - name: Read version
-        run: echo "ECO_VERSION=$(head -1 plugins/eco/VERSION)" >> $GITHUB_ENV
-
-      - name: Ad-hoc sign and package
+      - name: Sign (ad-hoc) and package
         run: |
           mkdir -p dist/VST3 dist/Components
-          cp -R "build/plugins/eco/Eco_artefacts/Release/VST3/MYE Eco.vst3" dist/VST3/
-          cp -R "build/plugins/eco/Eco_artefacts/Release/AU/MYE Eco.component" dist/Components/
-          codesign --force --deep -s - "dist/VST3/MYE Eco.vst3"
-          codesign --force --deep -s - "dist/Components/MYE Eco.component"
+          echo "# Versiones" > dist/VERSIONES.txt
+          for P in $PLUGINS; do
+            LOWER=$(echo $P | tr '[:upper:]' '[:lower:]')
+            V=$(head -1 plugins/$LOWER/VERSION)
+            echo "MYE $P $V" >> dist/VERSIONES.txt
+            ART="build/plugins/$LOWER/${P}_artefacts/Release"
+            cp -R "$ART/VST3/MYE $P.vst3" dist/VST3/
+            cp -R "$ART/AU/MYE $P.component" dist/Components/
+            codesign --force --deep -s - "dist/VST3/MYE $P.vst3"
+            codesign --force --deep -s - "dist/Components/MYE $P.component"
+            # single-plugin zip for its versioned release
+            mkdir -p "one-$P/VST3" "one-$P/Components"
+            cp -R "dist/VST3/MYE $P.vst3" "one-$P/VST3/"
+            cp -R "dist/Components/MYE $P.component" "one-$P/Components/"
+            cp INSTALL.md "one-$P/"
+            ditto -c -k --sequesterRsrc --keepParent "one-$P" "MYE-$P-v$V-mac.zip"
+          done
           cp INSTALL.md dist/
-          ditto -c -k --sequesterRsrc --keepParent dist MYE-Eco-mac.zip
-          cp MYE-Eco-mac.zip "MYE-Eco-v${ECO_VERSION}-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist MYE-plugins-mac.zip
+          cat dist/VERSIONES.txt
 
-      - name: Publish as the 'latest' release
+      - name: Publish releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # versioned release (kept forever)
-          if ! gh release view "eco-v${ECO_VERSION}" >/dev/null 2>&1; then
-            gh release create "eco-v${ECO_VERSION}" "MYE-Eco-v${ECO_VERSION}-mac.zip" --title "MYE Eco v${ECO_VERSION}" --notes "Ver CHANGELOG.md" --latest=false
+          # one-time fix: Eco "0.2.0" was really 0.1.1
+          if gh release view eco-v0.2.0 >/dev/null 2>&1; then
+            gh release edit eco-v0.2.0 --tag eco-v0.1.1 --title "MYE Eco v0.1.1" --notes "Eco 0.1.1 (publicado antes por error como 0.2.0)."
+            gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/eco-v0.2.0 || true
           fi
-          # rolling 'latest' release (stable download link)
+          # versioned release per plugin (kept forever, created once per version)
+          for P in $PLUGINS; do
+            LOWER=$(echo $P | tr '[:upper:]' '[:lower:]')
+            V=$(head -1 plugins/$LOWER/VERSION)
+            if ! gh release view "$LOWER-v$V" >/dev/null 2>&1; then
+              gh release create "$LOWER-v$V" "MYE-$P-v$V-mac.zip" --title "MYE $P v$V" --notes "Ver CHANGELOG.md" --latest=false
+            fi
+          done
+          # rolling 'latest' with all plugins (stable link)
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest MYE-Eco-mac.zip --title "MYE plugins — latest (Eco v${ECO_VERSION})" --notes "Build automático desde main. Eco v${ECO_VERSION}. Instrucciones en INSTALL.md dentro del zip." --latest
+          gh release create latest MYE-plugins-mac.zip --title "MYE plugins — latest" --notes "$(cat dist/VERSIONES.txt)" --latest
