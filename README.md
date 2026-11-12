@@ -11,3 +11,6 @@ wow, flutter and random drift, freeze, and an equal-power auto-panner (echoes on
 ## Build
     cmake -B build -DCMAKE_BUILD_TYPE=Release
     cmake --build build --config Release
+
+## Tools
+- `tools/freesound-mcp`: MCP server to search, audition and download Freesound sounds from Claude (see its README).
