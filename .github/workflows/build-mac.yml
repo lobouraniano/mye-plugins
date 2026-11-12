@@ -1,0 +1,33 @@
+name: Build macOS (VST3 + AU)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal arm64 + x86_64)
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --target Eco_VST3 Eco_AU -- -quiet
+
+      - name: Ad-hoc sign and package
+        run: |
+          mkdir -p dist/VST3 dist/Components
+          cp -R "build/plugins/eco/Eco_artefacts/Release/VST3/MYE Eco.vst3" dist/VST3/
+          cp -R "build/plugins/eco/Eco_artefacts/Release/AU/MYE Eco.component" dist/Components/
+          codesign --force --deep -s - "dist/VST3/MYE Eco.vst3"
+          codesign --force --deep -s - "dist/Components/MYE Eco.component"
+          cp INSTALL.md dist/
+          cd dist && zip -r ../MYE-Eco-mac.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MYE-Eco-mac
+          path: MYE-Eco-mac.zip
