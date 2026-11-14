@@ -91,11 +91,19 @@ inline void addFloat (Layout& l, const char* id, const juce::String& name, juce:
     const int dec = span >= 100.0f ? 0 : (span >= 10.0f ? 1 : 2);
     auto toText = [dec, unit] (float v, int)
     {
-        juce::String t = (unit == "Hz" && v >= 1000.0f) ? juce::String (v / 1000.0f, 1) + " k" : juce::String (v, dec) + " ";
+        juce::String t = (unit == "Hz" && v >= 1000.0f) ? juce::String (v / 1000.0f, 1) + " k"
+                       : (dec == 0 ? juce::String (juce::roundToInt (v)) : juce::String (v, dec)) + " ";
         return (t + unit).trim();
     };
+    // typed text: accepts "3k", "3 kHz", "3,5" ...
+    auto fromText = [] (const juce::String& text)
+    {
+        const auto t = text.trim().toLowerCase().replaceCharacter (',', '.');
+        const float v = t.getFloatValue();
+        return t.retainCharacters ("abcdefghijklmnopqrstuvwxyz").startsWithChar ('k') ? v * 1000.0f : v;
+    };
     l.push_back (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id, 1 }, name, r, def,
-                     juce::AudioParameterFloatAttributes().withLabel (unit).withStringFromValueFunction (toText)));
+                     juce::AudioParameterFloatAttributes().withLabel (unit).withStringFromValueFunction (toText).withValueFromStringFunction (fromText)));
 }
 inline void addFloat (Layout& l, const char* id, const juce::String& name, float lo, float hi, float def,
                       const juce::String& unit = {})
@@ -125,7 +133,7 @@ class SectionEditor : public juce::AudioProcessorEditor, private juce::Timer
 public:
     enum class Kind { knob, toggle, choice };
     struct Item { juce::String id, label; Kind kind; };
-    struct Section { juce::String title; std::vector<Item> items; int minSlots = 0; };
+    struct Section { juce::String title; std::vector<Item> items; int minSlots = 0; int cols = 0; };
 
     SectionEditor (ProcessorBase& p, juce::String titleText, juce::String subtitleText,
                    std::vector<Section> secs, Palette pal = {})
@@ -155,7 +163,7 @@ public:
         // width: one column per knob-ish slot, sections side by side
         int slots = 0;
         for (auto& s : sections) slots += juce::jmax (1, slotsFor (s));
-        setSize (juce::jmax (520, slots * slotW + 48 + ((int) sections.size() - 1) * gap), 330 + extraHeight);
+        setSize (juce::jmax (520, slots * slotW + 48 + ((int) sections.size() - 1) * gap), baseHeight + extraHeight);
         startTimerHz (20);
     }
 
@@ -166,8 +174,11 @@ public:
     {
         extra = c; extraHeight = height;
         addAndMakeVisible (c);
-        setSize (getWidth(), 330 + extraHeight);
+        setSize (getWidth(), baseHeight + extraHeight);
     }
+
+    // taller control area (sections with three rows of knobs)
+    void setBaseHeight (int h) { baseHeight = h; setSize (getWidth(), baseHeight + extraHeight); }
 
     void paint (juce::Graphics& g) override
     {
@@ -273,6 +284,7 @@ private:
 
     static int slotsFor (const Section& s)
     {
+        if (s.cols > 0) return s.cols;
         if (s.minSlots > 0) return juce::jmax (s.minSlots, slotsForItems (s));
         return slotsForItems (s);
     }
@@ -342,7 +354,7 @@ private:
     std::map<juce::String, Ctl*> controls;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> sectionRects;
     juce::Component* extra = nullptr;
-    int extraHeight = 0;
+    int extraHeight = 0, baseHeight = 330;
     static constexpr int slotW = 92, gap = 10;
 };
 

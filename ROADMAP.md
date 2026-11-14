@@ -24,6 +24,9 @@ Puntos de escucha: el sonido como se oye desde algún lugar/aparato/cuerpo. Capa
 Escenas: A través de algo (puerta, pared, ventana, auto desde afuera, otra habitación, bajo el agua) · Por un aparato (parlante de celular, llamada telefónica, radio AM, walkie-talkie, megáfono, TV de al lado, auriculares ajenos) · En el cuerpo (aturdido, oído tapado, acúfeno, pulso propio, adentro de la cabeza).
 Controles comunes: Escena, Distancia, Material/Calidad, Espacio, Defecto, TRANSICIÓN (fader de normal → punto de escucha, para automatizar en montaje), Acúfeno, Pulso, Salida. Uso cotidiano incluido.
 
+## Laringe 0.1.0 (2026-11-14)
+Harmonizador tipo UltraPitch pedido por Carlos: 4 voces PSOLA (tono, fino, formante, retardo, paneo, nivel), animación, presets. Afinación verificada por test; falta prueba de oído en voces reales (artefactos esperables en fuentes polifónicas o ruidosas).
+
 ## Después
 - Cóclea: estirador tipo Paulstretch "captura y estira" (algoritmo propio desde la descripción pública).
 - Caracol: resonadores, beat repeat, granular.

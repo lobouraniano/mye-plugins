@@ -9,6 +9,7 @@ Built with JUCE (VST3 / AU / Standalone). Mac builds: see Releases (`latest`).
 | **Martillo** | Compresor óptico clásico con énfasis HF y válvula |
 | **Yunque** | Saturación / forja: Válvula, Cinta, Transformador, Fragua |
 | **Tímpano** | Puntos de escucha: a través de algo, por un aparato, en el cuerpo |
+| **Laringe** | Harmonizador de cuatro voces con formantes independientes |
 
 Versiones y cambios: `CHANGELOG.md`. Plan: `ROADMAP.md`.
 

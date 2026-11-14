@@ -456,6 +456,10 @@ class ResponseCurve : public juce::Component
 public:
     explicit ResponseCurve (const CurveState& c) : cs (c) {}
 
+    void mouseMove (const juce::MouseEvent& e) override { hoverX = (float) e.x; }
+    void mouseDrag (const juce::MouseEvent& e) override { hoverX = (float) e.x; }
+    void mouseExit (const juce::MouseEvent&) override   { hoverX = -1.0f; }
+
     void paint (juce::Graphics& g) override
     {
         const auto acc = juce::Colour (0xffc8873a), ink = juce::Colour (0xffe8e2d4);
@@ -463,7 +467,9 @@ public:
         g.setColour (juce::Colour (0xff1c1c1c));
         g.fillRoundedRectangle (r, 6.0f);
         auto plot = r.reduced (12.0f, 8.0f);
-        auto labels = plot.removeFromBottom (13.0f);
+        auto readout = plot.removeFromTop (18.0f);
+        auto labels = plot.removeFromBottom (14.0f);
+        plot.removeFromLeft (38.0f);                       // dB scale
 
         const double sr = cs.sr.load();
         Biquad hp, lp, k1, k2;
@@ -472,49 +478,98 @@ public:
         k1.peak (sr, cs.p1f.load(), cs.p1q.load(), cs.p1g.load());
         k2.peak (sr, cs.p2f.load(), cs.p2q.load(), cs.p2g.load());
         const float order = cs.steep.load() ? 2.0f : 1.0f, level = cs.levelDb.load();
-
-        constexpr float topDb = 18.0f, botDb = -60.0f;
-        auto xFor = [&] (double f) { return plot.getX() + plot.getWidth() * (float) (std::log (f / 20.0) / std::log (1000.0)); };
-        auto yFor = [&] (float db) { return juce::jmap (juce::jlimit (botDb, topDb, db), topDb, botDb, plot.getY(), plot.getBottom()); };
-
-        g.setFont (juce::FontOptions (10.0f));
-        for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
+        auto dbAt = [&] (double f)
         {
-            const bool major = f == 100.0 || f == 1000.0 || f == 10000.0;
-            g.setColour (ink.withAlpha (major ? 0.14f : 0.06f));
+            f = juce::jmin (sr * 0.49, f);
+            return order * (hp.magnitudeDb (sr, f) + lp.magnitudeDb (sr, f)) + k1.magnitudeDb (sr, f) + k2.magnitudeDb (sr, f) + level;
+        };
+
+        constexpr float topDb = 12.0f, botDb = -60.0f;
+        auto xFor = [&] (double f) { return plot.getX() + plot.getWidth() * (float) (std::log (f / 20.0) / std::log (1000.0)); };
+        auto fFor = [&] (float x) { return 20.0 * std::pow (1000.0, (double) juce::jlimit (0.0f, 1.0f, (x - plot.getX()) / plot.getWidth())); };
+        auto yFor = [&] (float db) { return juce::jmap (juce::jlimit (botDb, topDb, db), topDb, botDb, plot.getY(), plot.getBottom()); };
+        auto hz = [] (double f) { return f >= 1000.0 ? juce::String (f / 1000.0, f >= 10000.0 ? 0 : 1) + " kHz" : juce::String (juce::roundToInt (f)) + " Hz"; };
+
+        // ---- grid: every frequency line is labelled, dB every 12
+        g.setFont (juce::FontOptions (10.0f));
+        for (double f : { 20.0, 30.0, 40.0, 50.0, 60.0, 80.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 600.0, 800.0, 1000.0, 1500.0,
+                          2000.0, 3000.0, 4000.0, 5000.0, 6000.0, 8000.0, 10000.0, 15000.0, 20000.0 })
+        {
+            const bool decade = f == 100.0 || f == 1000.0 || f == 10000.0;
+            const bool named = decade || f == 50.0 || f == 200.0 || f == 500.0 || f == 2000.0 || f == 5000.0 || f == 20.0 || f == 20000.0;
+            g.setColour (ink.withAlpha (decade ? 0.2f : (named ? 0.1f : 0.045f)));
             g.drawVerticalLine ((int) xFor (f), plot.getY(), plot.getBottom());
-            if (major)
+            if (named)
             {
-                g.setColour (ink.withAlpha (0.5f));
-                g.drawText (f >= 1000.0 ? juce::String ((int) (f / 1000.0)) + " kHz" : juce::String ((int) f) + " Hz",
-                            juce::Rectangle<float> (xFor (f) - 30.0f, labels.getY(), 60.0f, labels.getHeight()), juce::Justification::centred);
+                g.setColour (ink.withAlpha (decade ? 0.7f : 0.45f));
+                const auto just = f == 20.0 ? juce::Justification::left : (f == 20000.0 ? juce::Justification::right : juce::Justification::centred);
+                g.drawText (f >= 1000.0 ? juce::String ((int) (f / 1000.0)) + "k" : juce::String ((int) f),
+                            juce::Rectangle<float> (xFor (f) - (f == 20.0 ? 0.0f : (f == 20000.0 ? 40.0f : 20.0f)), labels.getY() + 2.0f, 40.0f, 12.0f), just);
             }
         }
-        for (float db : { 0.0f, -20.0f, -40.0f })
+        for (float db = topDb; db >= botDb; db -= 12.0f)
         {
-            g.setColour (ink.withAlpha (db == 0.0f ? 0.3f : 0.08f));
+            g.setColour (ink.withAlpha (db == 0.0f ? 0.35f : 0.08f));
             g.drawHorizontalLine ((int) yFor (db), plot.getX(), plot.getRight());
-            g.setColour (ink.withAlpha (0.45f));
-            g.drawText (juce::String ((int) db) + " dB", juce::Rectangle<float> (plot.getX() + 2.0f, yFor (db) - 12.0f, 50.0f, 11.0f), juce::Justification::left);
+            g.setColour (ink.withAlpha (db == 0.0f ? 0.8f : 0.45f));
+            g.drawText ((db > 0.0f ? "+" : "") + juce::String ((int) db) + " dB",
+                        juce::Rectangle<float> (r.getX() + 8.0f, yFor (db) - 6.0f, 40.0f, 12.0f), juce::Justification::left);
         }
 
+        // ---- curve + what it means in numbers
         juce::Path line;
-        for (float px = 0.0f; px <= plot.getWidth(); px += 2.0f)
+        float peakDb = -200.0f; double peakF = 1000.0, passLo = 0.0, passHi = 0.0;
+        const int steps = (int) plot.getWidth();
+        std::vector<float> dbs ((size_t) steps + 1);
+        for (int i = 0; i <= steps; ++i)
         {
-            const double f = juce::jmin (sr * 0.49, 20.0 * std::pow (1000.0, (double) (px / plot.getWidth())));
-            const float db = order * (hp.magnitudeDb (sr, f) + lp.magnitudeDb (sr, f)) + k1.magnitudeDb (sr, f) + k2.magnitudeDb (sr, f) + level;
-            if (px == 0.0f) line.startNewSubPath (plot.getX(), yFor (db)); else line.lineTo (plot.getX() + px, yFor (db));
+            const double f = fFor (plot.getX() + (float) i);
+            dbs[(size_t) i] = dbAt (f);
+            if (dbs[(size_t) i] > peakDb) { peakDb = dbs[(size_t) i]; peakF = f; }
+            const float y = yFor (dbs[(size_t) i]);
+            if (i == 0) line.startNewSubPath (plot.getX(), y); else line.lineTo (plot.getX() + (float) i, y);
         }
+        for (int i = 0; i <= steps; ++i)
+            if (dbs[(size_t) i] >= peakDb - 6.0f) { const double f = fFor (plot.getX() + (float) i); if (passLo == 0.0) passLo = f; passHi = f; }
+
+        // the band that still gets through (within 6 dB of the loudest point)
+        g.setColour (acc.withAlpha (0.10f));
+        g.fillRect (juce::Rectangle<float> (xFor (passLo), plot.getY(), xFor (passHi) - xFor (passLo), plot.getHeight()));
         juce::Path fill (line);
         fill.lineTo (plot.getRight(), plot.getBottom()); fill.lineTo (plot.getX(), plot.getBottom()); fill.closeSubPath();
-        g.setColour (acc.withAlpha (0.16f));
+        g.setColour (acc.withAlpha (0.18f));
         g.fillPath (fill);
         g.setColour (acc);
         g.strokePath (line, juce::PathStrokeType (2.0f));
+        g.fillEllipse (xFor (peakF) - 3.5f, yFor (peakDb) - 3.5f, 7.0f, 7.0f);
+
+        g.setFont (juce::FontOptions (11.0f));
+        g.setColour (ink.withAlpha (0.85f));
+        g.drawText (mye::utf8 ("Pasa de ") + hz (passLo) + " a " + hz (passHi) + mye::utf8 ("   ·   máximo ") + juce::String (peakDb, 1) + " dB en " + hz (peakF)
+                        + mye::utf8 ("   ·   100 Hz: ") + juce::String (juce::roundToInt (dbAt (100.0))) + mye::utf8 (" dB   ·   1 kHz: ") + juce::String (juce::roundToInt (dbAt (1000.0)))
+                        + mye::utf8 (" dB   ·   5 kHz: ") + juce::String (juce::roundToInt (dbAt (5000.0))) + " dB",
+                    readout, juce::Justification::centredLeft);
+
+        // ---- pointer readout
+        if (hoverX >= plot.getX() && hoverX <= plot.getRight())
+        {
+            const double f = fFor (hoverX);
+            const float db = dbAt (f);
+            g.setColour (ink.withAlpha (0.5f));
+            g.drawVerticalLine ((int) hoverX, plot.getY(), plot.getBottom());
+            g.setColour (ink);
+            g.fillEllipse (hoverX - 3.0f, yFor (db) - 3.0f, 6.0f, 6.0f);
+            const auto text = hz (f) + ":  " + juce::String (db, 1) + " dB";
+            juce::Rectangle<float> box (hoverX + 8.0f, plot.getY() + 4.0f, 118.0f, 18.0f);
+            if (box.getRight() > plot.getRight()) box.setX (hoverX - 126.0f);
+            g.setColour (juce::Colour (0xee101010)); g.fillRoundedRectangle (box, 3.0f);
+            g.setColour (ink); g.drawText (text, box, juce::Justification::centred);
+        }
     }
 
 private:
     const CurveState& cs;
+    float hoverX = -1.0f;
 };
 
 class TimpanoEditor : public mye::SectionEditor
@@ -533,7 +588,7 @@ public:
           }),
           curve (p.curve)
     {
-        setExtraComponent (&curve, 180);
+        setExtraComponent (&curve, 250);
     }
 
 private:

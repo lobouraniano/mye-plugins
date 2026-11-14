@@ -53,6 +53,7 @@ add_subdirectory(plugins/estribo)
 add_subdirectory(plugins/martillo)
 add_subdirectory(plugins/yunque)
 add_subdirectory(plugins/timpano)
+add_subdirectory(plugins/laringe)
 
 option(MYE_BUILD_TESTS "Build offline DSP test" OFF)
 if(MYE_BUILD_TESTS)

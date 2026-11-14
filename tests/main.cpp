@@ -2,6 +2,33 @@
 #include "MyeCommon.h"
 juce::AudioProcessor* createEstribo(); juce::AudioProcessor* createMartillo();
 juce::AudioProcessor* createYunque();  juce::AudioProcessor* createTimpano();
+juce::AudioProcessor* createLaringe();
+
+// every knob: does it keep the value it is given, and does its own text read back as the same value?
+static int knobCheck (const char* name, juce::Component& root)
+{
+    int bad = 0;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (&c))
+        {
+            for (double frac : { 0.13, 0.5, 0.87 })
+            {
+                const double v = sl->proportionOfLengthToValue (frac);
+                sl->setValue (v, juce::sendNotificationSync);
+                const double span = sl->getMaximum() - sl->getMinimum();
+                const double kept = sl->getValue(), fromText = sl->getValueFromText (sl->getTextFromValue (kept));
+                if (std::abs (kept - v) > span * 0.01)
+                { printf ("%s: knob does not hold value (%s): set %.3f got %.3f\n", name, sl->getTextFromValue (v).toRawUTF8(), v, kept); ++bad; }
+                if (std::abs (fromText - kept) > juce::jmax (span * 0.01, std::abs (kept) * 0.06))
+                { printf ("%s: text '%s' reads back as %.3f (value %.3f)\n", name, sl->getTextFromValue (kept).toRawUTF8(), fromText, kept); ++bad; }
+            }
+        }
+        for (auto* ch : c.getChildren()) walk (*ch);
+    };
+    walk (root);
+    return bad;
+}
 
 static int run (const char* name, juce::AudioProcessor* (*make)())
 {
@@ -62,6 +89,8 @@ static int run (const char* name, juce::AudioProcessor* (*make)())
             f.deleteFile();
             juce::FileOutputStream os (f);
             juce::PNGImageFormat().writeImageToStream (img, os);
+            os.flush();
+            failures += knobCheck (name, *ed);
         }
     }
     return failures;
@@ -125,12 +154,63 @@ static void transitionReport()
     }
 }
 
+static void setPlain (juce::AudioProcessor& p, const char* id, float v)
+{
+    for (auto* prm : p.getParameters())
+        if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm))
+            if (r->paramID == id) r->setValueNotifyingHost (r->convertTo0to1 (v));
+}
+
+// Laringe: does a voice really come out at the pitch that was asked for?
+static int pitchReport()
+{
+    int bad = 0;
+    for (double f0 : { 110.0, 200.0, 330.0 })
+    for (float semis : { -12.0f, 4.0f, 7.0f, 12.0f })
+    {
+        std::unique_ptr<juce::AudioProcessor> p (createLaringe());
+        for (const char* id : { "v2on", "v3on", "v4on" }) setPlain (*p, id, 0.0f);
+        setPlain (*p, "v1pitch", semis); setPlain (*p, "v1fine", 0.0f); setPlain (*p, "anim", 0.0f); setPlain (*p, "dry", -60.0f);
+        const double sr = 48000.0;
+        p->prepareToPlay (sr, 512);
+        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m;
+        std::vector<float> out; double ph = 0;
+        for (int k = 0; k < 48000 * 2 / 512; ++k)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                ph += f0 / sr; float x = 0;
+                for (int h = 1; h <= 8; ++h) x += (float) std::sin (6.283185307 * ph * h) / (float) h;   // voice-like: harmonics
+                b.setSample (0, i, 0.25f * x); b.setSample (1, i, 0.25f * x);
+            }
+            p->processBlock (b, m);
+            if (k > 120) for (int i = 0; i < 512; ++i) out.push_back (b.getSample (0, i));
+        }
+        // fundamental of the output by autocorrelation
+        const int N = 16384; double best = 0; std::vector<double> ac (2000, 0.0);
+        for (int tau = 40; tau < 1999; ++tau) { double a = 0; for (int i = 0; i < N; ++i) a += out[(size_t) i] * out[(size_t) (i + tau)]; ac[(size_t) tau] = a; best = std::max (best, a); }
+        double got = 0;
+        for (int tau = 41; tau < 1998; ++tau)
+            if (ac[(size_t) tau] > 0.85 * best && ac[(size_t) tau] >= ac[(size_t) tau - 1] && ac[(size_t) tau] >= ac[(size_t) tau + 1])
+            {
+                const double a = ac[(size_t) tau - 1], bb = ac[(size_t) tau], c = ac[(size_t) tau + 1];
+                got = sr / (tau + 0.5 * (a - c) / (a - 2 * bb + c)); break;
+            }
+        const double want = f0 * std::pow (2.0, semis / 12.0), cents = 1200.0 * std::log2 (got / want);
+        double rms = 0; for (int i = 0; i < N; ++i) rms += out[(size_t) i] * out[(size_t) i];
+        printf ("Laringe %5.0f Hz %+3.0f st: want %6.1f Hz, got %6.1f Hz (%+.0f cents), level %.1f dB\n", f0, semis, want, got, cents, 10 * std::log10 (rms / N + 1e-12));
+        if (std::abs (cents) > 25.0) ++bad;
+    }
+    return bad;
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
     noiseReport();
     transitionReport();
-    int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Timpano", createTimpano);
+    int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Timpano", createTimpano) + run ("Laringe", createLaringe);
+    f += pitchReport();
     printf (f == 0 ? "ALL OK\n" : "FAILURES: %d\n", f);
     return f == 0 ? 0 : 1;
 }
