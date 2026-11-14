@@ -47,8 +47,8 @@ public:
 
         const bool limit = p ("mode") > 0.5f;
         const float ratio = limit ? 20.0f : 3.0f, knee = limit ? 2.0f : 12.0f;
-        const float scGain = mye::dbToGain (-10.0f + 0.45f * p ("peak"));
-        const float emph = p ("emphasis") / 100.0f * 3.0f;
+        const float scGain = mye::dbToGain (-6.0f + 0.5f * p ("peak"));
+        const float emph = p ("emphasis") / 100.0f * 6.0f;
         const float tube = p ("tube") / 100.0f;
         gainSm.setTargetValue (mye::dbToGain (p ("gain")));
         mixSm.setTargetValue (p ("mix") / 100.0f);
@@ -57,7 +57,7 @@ public:
         const float envAtt = coeff (0.001f), envRel = coeff (0.03f);
         // Limit: catches peaks faster and lets go a bit faster; Compress: smooth 10 ms optical attack
         const float att = coeff (limit ? 0.002f : 0.010f), fastRel = coeff (limit ? 0.04f : 0.06f), memC = coeff (4.0f);
-        const float k = 1.0f + 3.0f * tube, bias = 0.15f * tube;
+        const float k = 1.0f + 6.0f * tube, bias = 0.25f * tube;
         const float tubeNorm = k * (1.0f - std::pow (std::tanh (k * bias), 2.0f));
         constexpr float threshold = -12.0f;
         float maxGr = 0.0f, peakOut = 0.0f;

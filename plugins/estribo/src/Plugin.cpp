@@ -117,7 +117,7 @@ public:
         const float asym = ms.asym * ch, hard = ms.hardness;
         const float noiseAmt = ms.noise * ch, humAmt = ms.hum * ch;
         const float wow = ms.wow * ch, flutter = ms.flutter * ch;
-        const float modDepthMs = p ("moddepth") / 100.0f * 4.0f;
+        const float modDepthMs = p ("moddepth") / 100.0f * 8.0f;
         const double modInc = p ("modrate") / sr, panInc = p ("panrate") / sr;
         const float panDepth = p ("pandepth") / 100.0f;
         const float width = p ("width") / 100.0f;

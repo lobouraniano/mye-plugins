@@ -3,6 +3,7 @@
 // from inside the body. Each scene = transmission filter + object resonance +
 // the space on the other side + the defect (distortion / compression / noise).
 #include "MyeCommon.h"
+#include <complex>
 
 namespace
 {
@@ -51,6 +52,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout()
     for (auto& s : scenes) names.add (utf8 (s.name));
     addChoice(l, "scene", "Escena", names, 0);
     addFloat (l, "transition", utf8 ("Transición"), 0.0f, 100.0f, 100.0f, "%");
+    addFloat (l, "lowcut", "Corte grave", skewed (20.0f, 2000.0f, 200.0f, 1.0f), 40.0f, "Hz");
+    addFloat (l, "highcut", "Corte agudo", skewed (200.0f, 20000.0f, 2000.0f, 1.0f), 500.0f, "Hz");
+    addFloat (l, "resfreq", "Resonancia", skewed (60.0f, 6000.0f, 600.0f, 1.0f), 180.0f, "Hz");
+    addFloat (l, "resgain", "Realce", -12.0f, 18.0f, 5.0f, "dB");
     addFloat (l, "distance", "Distancia", 0.0f, 100.0f, 30.0f, "%");
     addFloat (l, "material", "Material / calidad", 0.0f, 100.0f, 50.0f, "%");
     addFloat (l, "space", "Espacio", 0.0f, 100.0f, 50.0f, "%");
@@ -62,9 +67,58 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout()
     return { l.begin(), l.end() };
 }
 
-using Filter = juce::dsp::IIR::Filter<float>;
-using Coefs = juce::dsp::IIR::Coefficients<float>;
 float lerp (float a, float b, float t) { return a + (b - a) * t; }
+
+// allocation-free biquad (RBJ cookbook) with two channels of state, so the
+// coefficients can be moved many times per block while Transition sweeps
+struct Biquad
+{
+    float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1[2] {}, z2[2] {};
+
+    void reset() { z1[0] = z1[1] = z2[0] = z2[1] = 0.0f; }
+    void copyCoefs (const Biquad& o) { b0 = o.b0; b1 = o.b1; b2 = o.b2; a1 = o.a1; a2 = o.a2; }
+
+    float process (int c, float x)
+    {
+        const float y = b0 * x + z1[c];
+        z1[c] = b1 * x - a1 * y + z2[c];
+        z2[c] = b2 * x - a2 * y;
+        return y;
+    }
+    void highPass (double sr, float f, float q)
+    {
+        const double w = juce::MathConstants<double>::twoPi * f / sr, cs = std::cos (w), al = std::sin (w) / (2.0 * q), a0 = 1.0 + al;
+        b0 = (float) ((1.0 + cs) * 0.5 / a0); b1 = (float) (-(1.0 + cs) / a0); b2 = b0;
+        a1 = (float) (-2.0 * cs / a0); a2 = (float) ((1.0 - al) / a0);
+    }
+    void lowPass (double sr, float f, float q)
+    {
+        const double w = juce::MathConstants<double>::twoPi * f / sr, cs = std::cos (w), al = std::sin (w) / (2.0 * q), a0 = 1.0 + al;
+        b0 = (float) ((1.0 - cs) * 0.5 / a0); b1 = (float) ((1.0 - cs) / a0); b2 = b0;
+        a1 = (float) (-2.0 * cs / a0); a2 = (float) ((1.0 - al) / a0);
+    }
+    void peak (double sr, float f, float q, float gainDb)
+    {
+        const double A = std::pow (10.0, gainDb / 40.0);
+        const double w = juce::MathConstants<double>::twoPi * f / sr, cs = std::cos (w), al = std::sin (w) / (2.0 * q), a0 = 1.0 + al / A;
+        b0 = (float) ((1.0 + al * A) / a0); b1 = (float) (-2.0 * cs / a0); b2 = (float) ((1.0 - al * A) / a0);
+        a1 = b1; a2 = (float) ((1.0 - al / A) / a0);
+    }
+    float magnitudeDb (double sr, double f) const
+    {
+        const double w = juce::MathConstants<double>::twoPi * f / sr;
+        const std::complex<double> u1 = std::polar (1.0, -w), u2 = std::polar (1.0, -2.0 * w);
+        const auto h = ((double) b0 + (double) b1 * u1 + (double) b2 * u2) / (1.0 + (double) a1 * u1 + (double) a2 * u2);
+        return (float) (20.0 * std::log10 (juce::jmax (1.0e-6, std::abs (h))));
+    }
+};
+
+// what the transmission is doing right now (read by the curve display)
+struct CurveState
+{
+    std::atomic<float> hp { 40 }, lp { 500 }, p1f { 180 }, p1g { 0 }, p1q { 1 }, p2f { 1000 }, p2g { 0 }, p2q { 1 }, levelDb { 0 }, sr { 48000 };
+    std::atomic<bool> steep { true };
+};
 } // namespace
 
 class TimpanoProcessor : public mye::ProcessorBase
@@ -72,7 +126,7 @@ class TimpanoProcessor : public mye::ProcessorBase
 public:
     TimpanoProcessor() : ProcessorBase (layout())
     {
-        // picking a scene moves the shared knobs to that scene's starting point
+        // picking a scene moves every knob to that scene's starting point
         presetActions["scene"] = [this] (int sc)
         {
             struct P { float distance, material, space, defect, tinnitus, pulse; };
@@ -81,7 +135,11 @@ public:
                 { 30, 60, 30, 50, 0, 0 },  { 30, 50, 60, 50, 0, 15 }, { 10, 40, 0, 50, 0, 0 },   { 0, 40, 0, 50, 0, 0 },
                 { 0, 35, 0, 60, 0, 0 },    { 0, 30, 0, 60, 0, 0 },    { 40, 40, 60, 60, 0, 0 },  { 40, 50, 50, 50, 0, 0 },
                 { 20, 50, 0, 40, 0, 0 },   { 20, 60, 40, 30, 60, 30 },{ 0, 50, 0, 0, 0, 20 },    { 0, 50, 0, 0, 0, 40 } };
-            const auto& pr = presets[juce::jlimit (0, numScenes - 1, sc)];
+            sc = juce::jlimit (0, numScenes - 1, sc);
+            const auto& pr = presets[sc];
+            const auto& s = scenes[sc];
+            setParam ("lowcut", s.hp); setParam ("highcut", s.lp);
+            setParam ("resfreq", s.p1f > 0.0f ? s.p1f : 1000.0f); setParam ("resgain", s.p1g);
             setParam ("distance", pr.distance); setParam ("material", pr.material); setParam ("space", pr.space);
             setParam ("defect", pr.defect); setParam ("tinnitus", pr.tinnitus); setParam ("pulse", pr.pulse);
         };
@@ -89,23 +147,23 @@ public:
     const juce::String getName() const override { return "MYE Timpano"; }
     double getTailLengthSeconds() const override { return 3.0; }
 
+    CurveState curve;
+
     void prepareToPlay (double sampleRate, int block) override
     {
         sr = sampleRate;
-        for (int c = 0; c < 2; ++c)
-            for (auto* f : { &hp1[c], &hp2[c], &lp1[c], &lp2[c], &pk1[c], &pk2[c] })
-            {
-                f->coefficients = Coefs::makeLowPass (sr, 1000.0f);
-                f->reset();
-            }
+        for (auto* f : { &hpA, &hpB, &lpA, &lpB, &pkA, &pkB }) f->reset();
         reverb.setSampleRate (sr);
         reverb.reset();
         wet.setSize (2, block);
         room.setSize (2, block);
+        tBuf.assign ((size_t) block, 0.0f);
         transSm.reset (sr, 0.08);
-        env = 0.0f; holdCount = 0.0f; holdVal[0] = holdVal[1] = 0.0f;
+        transSm.setCurrentAndTargetValue (p ("transition") / 100.0f);
+        env = 0.0f; holdCount = 0.0f; holdVal[0] = holdVal[1] = 0.0f; lastRoomGain = 0.0f;
         wobPh = tinPh = tinPh2 = beatPh = 0.0;
         lastScene = -1;
+        curve.sr.store ((float) sr);
     }
 
     void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override
@@ -115,6 +173,7 @@ public:
         const int n = buffer.getNumSamples(), nch = juce::jmin (2, buffer.getNumChannels());
         if (nch == 0) return;
         if (wet.getNumSamples() < n) { wet.setSize (2, n, false, false, true); room.setSize (2, n, false, false, true); }
+        if ((int) tBuf.size() < n) tBuf.resize ((size_t) n);
 
         const int si = juce::jlimit (0, numScenes - 1, (int) p ("scene"));
         const Scene& s = scenes[si];
@@ -123,121 +182,130 @@ public:
         const float space = p ("space") / 100.0f, defect = p ("defect") / 100.0f;
         transSm.setTargetValue (p ("transition") / 100.0f);
 
-        // ---- map the shared controls onto the scene
-        float hpF = s.hp, lpF = s.lp, resMul = 1.0f, distAmt = s.distAmt, levelDb = s.levelDb;
-        if (s.group == through) { lpF *= lerp (2.0f, 0.5f, mat); resMul = lerp (1.5f, 0.7f, mat); levelDb -= 6.0f * mat; }
-        else if (s.group == device) { hpF *= lerp (1.5f, 0.6f, mat); lpF *= lerp (0.6f, 1.5f, mat); distAmt *= lerp (1.5f, 0.4f, mat); }
-        else lpF *= lerp (1.6f, 0.5f, mat);
-        lpF *= 1.0f - 0.6f * dist;                         // air absorbs highs with distance
-        levelDb -= 12.0f * dist;
+        // ---- targets at Transition = 100 %: the frequency knobs, shaped by material and distance
+        float hpT = p ("lowcut"), lpT = p ("highcut"), resMul = 1.0f, distAmt = s.distAmt, levelDb = s.levelDb;
+        const float p1f = p ("resfreq"), p1gT = p ("resgain");
+        if (s.group == through)     { resMul = lerp (1.8f, 0.5f, mat); lpT *= lerp (1.5f, 0.5f, mat); levelDb += lerp (3.0f, -9.0f, mat); }
+        else if (s.group == device) { hpT *= lerp (1.6f, 0.6f, mat); lpT *= lerp (0.55f, 1.6f, mat); distAmt *= lerp (1.8f, 0.3f, mat); }
+        else                          lpT *= lerp (1.6f, 0.5f, mat);
+        lpT *= std::pow (0.2f, dist);                      // air and obstacles eat the highs with distance
+        levelDb -= 24.0f * dist;
         distAmt = juce::jlimit (0.0f, 1.0f, distAmt * 2.0f * defect);
         const float noiseAmt = s.noiseAmt * 2.0f * defect;
-        const float roomAmt = juce::jlimit (0.0f, 1.0f, (s.roomAmt + 0.4f * dist * (s.roomSize > 0.0f ? 1.0f : 0.5f)) * 2.0f * space);
+        const float roomAmt = juce::jlimit (0.0f, 1.5f, (s.roomAmt + 0.5f * dist) * 2.0f * space);
 
-        if (s.wobble)                                      // underwater: the surface moves
-        {
-            wobPh = std::fmod (wobPh + (double) n * 0.23 / sr, 1.0);
-            lpF *= 1.0f + 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * wobPh);
-        }
-        const float nyq = (float) sr * 0.45f;
-        hpF = juce::jlimit (10.0f, nyq, hpF);
-        lpF = juce::jlimit (60.0f, nyq, lpF);
-
-        auto hpC = Coefs::makeHighPass (sr, hpF, 0.707f);
-        auto lpC = Coefs::makeLowPass (sr, lpF, 0.707f);
-        auto p1 = Coefs::makePeakFilter (sr, juce::jlimit (20.0f, nyq, s.p1f > 0 ? s.p1f : 1000.0f), s.p1q, mye::dbToGain (s.p1g * resMul));
-        auto p2 = Coefs::makePeakFilter (sr, juce::jlimit (20.0f, nyq, s.p2f > 0 ? s.p2f : 1000.0f), s.p2q, mye::dbToGain (s.p2g * resMul));
-        for (int c = 0; c < 2; ++c)
-        {
-            *hp1[c].coefficients = *hpC; *hp2[c].coefficients = *hpC;
-            *lp1[c].coefficients = *lpC; *lp2[c].coefficients = *lpC;
-            *pk1[c].coefficients = *p1;  *pk2[c].coefficients = *p2;
-        }
-
-        // ---- wet chain
-        for (int c = 0; c < nch; ++c) wet.copyFrom (c, 0, buffer, c, 0, n);
-        const float level = mye::dbToGain (levelDb);
-        const float ratio = 1.0f + 9.0f * s.comp;
+        const float nyq = (float) sr * 0.45f, top = juce::jmin (20000.0f, nyq);
+        hpT = juce::jlimit (10.0f, top * 0.5f, hpT);
+        lpT = juce::jlimit (60.0f, top, lpT);
         const float att = 1.0f - std::exp (-1.0f / (0.002f * (float) sr)), rel = 1.0f - std::exp (-1.0f / (0.08f * (float) sr));
-        const float holdLen = s.dist == crush ? 1.0f + distAmt * ((float) sr / 4000.0f - 1.0f) : 1.0f;
-        const float q = std::pow (2.0f, 12.0f - 6.0f * distAmt);
+        float t = 0, hpE = hpT, lpE = lpT, g1 = 0, g2 = 0, levelNowDb = 0;
 
-        for (int i = 0; i < n; ++i)
+        // ---- wet chain, in small chunks: Transition moves the transmission itself
+        // (the door closes), instead of crossfading two fixed signals
+        for (int pos = 0; pos < n;)
         {
-            float x[2];
-            const float l0 = wet.getSample (0, i), r0 = nch > 1 ? wet.getSample (1, i) : l0;
-            const float mid = 0.5f * (l0 + r0);
-            x[0] = lerp (l0, mid, s.mono); x[1] = lerp (r0, mid, s.mono);
+            const int len = juce::jmin (32, n - pos);
+            t = transSm.getCurrentValue();
 
-            if (s.noise != quiet && noiseAmt > 0.0f)
+            float lpNow = lpT;
+            if (s.wobble)                                  // underwater: the surface moves
             {
-                float sigGain = 1.0f;
-                const float nz = noiseSample (s.noise, noiseAmt, std::abs (mid), sigGain);
-                for (int c = 0; c < nch; ++c) x[c] = x[c] * sigGain + nz;
+                wobPh = std::fmod (wobPh + (double) len * 0.23 / sr, 1.0);
+                lpNow = juce::jmin (top, lpNow * (1.0f + 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * wobPh)));
             }
+            hpE = 10.0f * std::pow (hpT / 10.0f, t);       // log sweep: perceptually even
+            lpE = top * std::pow (lpNow / top, t);
+            g1 = p1gT * resMul * t; g2 = s.p2g * resMul * t;
+            levelNowDb = levelDb * t;
+            hpA.highPass (sr, hpE, 0.707f); hpB.copyCoefs (hpA);
+            lpA.lowPass (sr, lpE, 0.707f);  lpB.copyCoefs (lpA);
+            pkA.peak (sr, juce::jlimit (20.0f, nyq, p1f), s.p1q, g1);
+            pkB.peak (sr, juce::jlimit (20.0f, nyq, s.p2f > 0 ? s.p2f : 1000.0f), s.p2q, g2);
 
-            for (int c = 0; c < nch; ++c)
-            {
-                float y = hp1[c].processSample (x[c]);
-                if (s.steep) y = hp2[c].processSample (y);
-                y = lp1[c].processSample (y);
-                if (s.steep) y = lp2[c].processSample (y);
-                if (s.p1g != 0.0f) y = pk1[c].processSample (y);
-                if (s.p2g != 0.0f) y = pk2[c].processSample (y);
-                x[c] = y;
-            }
+            const float level = mye::dbToGain (levelNowDb);
+            const float monoE = s.mono * t, distE = distAmt * t, compE = s.comp * t, noiseE = noiseAmt * t;
+            const float ratio = 1.0f + 9.0f * compE;
+            const float holdLen = 1.0f + distE * ((float) sr / 4000.0f - 1.0f);
+            const float q = std::pow (2.0f, 12.0f - 6.0f * distE);
 
-            // defect: distortion
-            if (s.dist != none && distAmt > 0.0f)
+            for (int i = pos; i < pos + len; ++i)
             {
-                const float g = 1.0f + 8.0f * distAmt;
+                tBuf[(size_t) i] = transSm.getNextValue();
+                float x[2];
+                const float l0 = buffer.getSample (0, i), r0 = nch > 1 ? buffer.getSample (1, i) : l0;
+                const float mid = 0.5f * (l0 + r0);
+                x[0] = lerp (l0, mid, monoE); x[1] = lerp (r0, mid, monoE);
+
+                if (s.noise != quiet && noiseE > 0.0f)     // noise enters *before* the transmission: the device colours it
+                {
+                    float sigGain = 1.0f;
+                    const float nz = noiseSample (s.noise, noiseE, std::abs (mid), sigGain);
+                    for (int c = 0; c < nch; ++c) x[c] = x[c] * sigGain + nz;
+                }
+
                 for (int c = 0; c < nch; ++c)
                 {
-                    if (s.dist == soft) x[c] = std::tanh (x[c] * g) / std::tanh (g) ;
-                    else if (s.dist == hard) x[c] = juce::jlimit (-1.0f, 1.0f, x[c] * g) / juce::jmin (g, 3.0f);
+                    float y = hpA.process (c, x[c]);
+                    if (s.steep) y = hpB.process (c, y);
+                    y = lpA.process (c, y);
+                    if (s.steep) y = lpB.process (c, y);
+                    y = pkA.process (c, y);
+                    if (s.p2g != 0.0f) y = pkB.process (c, y);
+                    x[c] = y;
                 }
-                if (s.dist == crush)
+
+                if (s.dist != none && distE > 0.001f)      // defect: distortion
                 {
-                    holdCount += 1.0f;
-                    if (holdCount >= holdLen) { holdCount -= holdLen; for (int c = 0; c < nch; ++c) holdVal[c] = std::round (x[c] * q) / q; }
-                    for (int c = 0; c < nch; ++c) x[c] = holdVal[c];
+                    const float g = 10.0f * distE;
+                    for (int c = 0; c < nch; ++c)
+                    {
+                        if (s.dist == soft) x[c] = std::tanh (x[c] * g) / std::tanh (g);
+                        else if (s.dist == hard) x[c] = juce::jlimit (-1.0f, 1.0f, x[c] * (1.0f + g)) / juce::jmin (1.0f + g, 3.0f);
+                    }
+                    if (s.dist == crush)
+                    {
+                        holdCount += 1.0f;
+                        if (holdCount >= holdLen) { holdCount -= holdLen; for (int c = 0; c < nch; ++c) holdVal[c] = std::round (x[c] * q) / q; }
+                        for (int c = 0; c < nch; ++c) x[c] = holdVal[c];
+                    }
                 }
-            }
 
-            // defect: compression (devices squash everything)
-            if (s.comp > 0.0f)
-            {
-                const float lv = juce::jmax (std::abs (x[0]), std::abs (x[nch - 1]));
-                env += (lv > env ? att : rel) * (lv - env);
-                const float envDb = juce::Decibels::gainToDecibels (env, -100.0f);
-                const float over = envDb + 20.0f;
-                const float gr = over > 0.0f ? over * (1.0f - 1.0f / ratio) : 0.0f;
-                const float g = mye::dbToGain (-gr + 6.0f * s.comp);
-                for (int c = 0; c < nch; ++c) x[c] *= g;
-            }
+                if (compE > 0.0f)                          // defect: devices squash everything
+                {
+                    const float lv = juce::jmax (std::abs (x[0]), std::abs (x[nch - 1]));
+                    env += (lv > env ? att : rel) * (lv - env);
+                    const float over = juce::Decibels::gainToDecibels (env, -100.0f) + 20.0f;
+                    const float gr = over > 0.0f ? over * (1.0f - 1.0f / ratio) : 0.0f;
+                    const float g = mye::dbToGain (-gr + 6.0f * compE);
+                    for (int c = 0; c < nch; ++c) x[c] *= g;
+                }
 
-            for (int c = 0; c < nch; ++c) wet.setSample (c, i, x[c] * level);
+                for (int c = 0; c < nch; ++c) wet.setSample (c, i, x[c] * level);
+            }
+            pos += len;
         }
 
-        // space on the other side
-        if (roomAmt > 0.001f && s.roomSize > 0.0f)
+        // ---- the space on the other side (or the room the device sits in)
+        const float roomGain = roomAmt * 0.6f * t;
+        if (roomGain > 0.001f || lastRoomGain > 0.001f)
         {
             juce::Reverb::Parameters rp;
-            rp.roomSize = s.roomSize; rp.damping = 0.6f; rp.wetLevel = 1.0f; rp.dryLevel = 0.0f; rp.width = 0.8f;
+            rp.roomSize = s.roomSize > 0.0f ? s.roomSize : 0.35f; rp.damping = 0.6f; rp.wetLevel = 1.0f; rp.dryLevel = 0.0f; rp.width = 0.8f;
             reverb.setParameters (rp);
             for (int c = 0; c < nch; ++c) room.copyFrom (c, 0, wet, c, 0, n);
             if (nch > 1) reverb.processStereo (room.getWritePointer (0), room.getWritePointer (1), n);
             else reverb.processMono (room.getWritePointer (0), n);
-            for (int c = 0; c < nch; ++c) wet.addFrom (c, 0, room, c, 0, n, roomAmt * 0.6f);
+            for (int c = 0; c < nch; ++c) wet.addFromWithRamp (c, 0, room.getReadPointer (c), n, lastRoomGain, roomGain);
         }
+        lastRoomGain = roomGain;
 
-        // noise of the medium + body sounds
-        const float tin = juce::jlimit (0.0f, 1.0f, p ("tinnitus") / 100.0f);
-        const float pulse = p ("pulse") / 100.0f;
-        const double beatInc = p ("pulsebpm") / 60.0 / sr;
+        // ---- body sounds + output. Below 5 % the dry signal fades back in, so 0 % is a true bypass
+        const float tin = p ("tinnitus") / 100.0f, pulse = p ("pulse") / 100.0f, outGain = mye::dbToGain (p ("output"));
+        const double beatSec = 60.0 / p ("pulsebpm"), beatInc = 1.0 / (beatSec * sr);
         constexpr double twoPi = juce::MathConstants<double>::twoPi;
         for (int i = 0; i < n; ++i)
         {
+            const float ts = tBuf[(size_t) i], m = juce::jmin (1.0f, ts * 20.0f);
             float add = 0.0f;
             if (tin > 0.0f)
             {
@@ -247,33 +315,18 @@ public:
             if (pulse > 0.0f)
             {
                 beatPh = std::fmod (beatPh + beatInc, 1.0);
-                add += pulse * heartbeat (beatPh, 60.0 / p ("pulsebpm"));
+                add += pulse * heartbeat (beatPh, beatSec);
             }
-            for (int c = 0; c < nch; ++c) wet.setSample (c, i, wet.getSample (c, i) + add);
-        }
-
-        // ---- transition: normal listening -> listening point (equal power)
-        for (int i = 0; i < n; ++i)
-        {
-            const float t = transSm.getNextValue();
-            const float gd = std::cos (t * juce::MathConstants<float>::halfPi), gw = std::sin (t * juce::MathConstants<float>::halfPi);
             for (int c = 0; c < nch; ++c)
-                buffer.setSample (c, i, (buffer.getSample (c, i) * gd + wet.getSample (c, i) * gw) * mye::dbToGain (p ("output")));
+                buffer.setSample (c, i, (buffer.getSample (c, i) * (1.0f - m) + (wet.getSample (c, i) + add * ts) * m) * outGain);
         }
+
+        curve.hp = hpE; curve.lp = lpE; curve.p1f = p1f; curve.p1g = g1; curve.p1q = s.p1q;
+        curve.p2f = s.p2f > 0 ? s.p2f : 1000.0f; curve.p2g = g2; curve.p2q = s.p2q;
+        curve.levelDb = levelNowDb; curve.steep = s.steep;
     }
 
-    juce::AudioProcessorEditor* createEditor() override
-    {
-        using K = mye::SectionEditor::Kind;
-        return new mye::SectionEditor (*this, mye::utf8 ("TÍMPANO"), mye::utf8 ("M.Y.E. · puntos de escucha"),
-        {
-            { "ESCENA", { { "transition", mye::utf8 ("Transición"), K::knob }, { "scene", "", K::choice } }, 2 },
-            { "LUGAR",  { { "distance", "Distancia", K::knob }, { "material", "Material / calidad", K::knob },
-                          { "space", "Espacio", K::knob }, { "defect", "Defecto", K::knob } } },
-            { "CUERPO", { { "tinnitus", mye::utf8 ("Acúfeno"), K::knob }, { "pulse", "Pulso", K::knob }, { "pulsebpm", "Pulso bpm", K::knob } } },
-            { "SALIDA", { { "output", "Salida", K::knob } } },
-        });
-    }
+    juce::AudioProcessorEditor* createEditor() override;
 
 private:
     // ------------------------------------------------------------------ noise of the medium
@@ -381,9 +434,11 @@ private:
     }
 
     double sr = 44100.0;
-    Filter hp1[2], hp2[2], lp1[2], lp2[2], pk1[2], pk2[2];
+    Biquad hpA, hpB, lpA, lpB, pkA, pkB;
     juce::Reverb reverb;
     juce::AudioBuffer<float> wet, room;
+    std::vector<float> tBuf;
+    float lastRoomGain = 0;
     juce::SmoothedValue<float> transSm;
     juce::Random rng;
     float env = 0, holdCount = 0, holdVal[2] {};
@@ -394,6 +449,98 @@ private:
     double wobPh = 0, tinPh = 0, tinPh2 = 0, beatPh = 0, humPh = 0;
     int lastScene = -1;
 };
+
+// ---------------------------------------------------------------- what passes, what doesn't
+class ResponseCurve : public juce::Component
+{
+public:
+    explicit ResponseCurve (const CurveState& c) : cs (c) {}
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto acc = juce::Colour (0xffc8873a), ink = juce::Colour (0xffe8e2d4);
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colour (0xff1c1c1c));
+        g.fillRoundedRectangle (r, 6.0f);
+        auto plot = r.reduced (12.0f, 8.0f);
+        auto labels = plot.removeFromBottom (13.0f);
+
+        const double sr = cs.sr.load();
+        Biquad hp, lp, k1, k2;
+        hp.highPass (sr, cs.hp.load(), 0.707f);
+        lp.lowPass (sr, cs.lp.load(), 0.707f);
+        k1.peak (sr, cs.p1f.load(), cs.p1q.load(), cs.p1g.load());
+        k2.peak (sr, cs.p2f.load(), cs.p2q.load(), cs.p2g.load());
+        const float order = cs.steep.load() ? 2.0f : 1.0f, level = cs.levelDb.load();
+
+        constexpr float topDb = 18.0f, botDb = -60.0f;
+        auto xFor = [&] (double f) { return plot.getX() + plot.getWidth() * (float) (std::log (f / 20.0) / std::log (1000.0)); };
+        auto yFor = [&] (float db) { return juce::jmap (juce::jlimit (botDb, topDb, db), topDb, botDb, plot.getY(), plot.getBottom()); };
+
+        g.setFont (juce::FontOptions (10.0f));
+        for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
+        {
+            const bool major = f == 100.0 || f == 1000.0 || f == 10000.0;
+            g.setColour (ink.withAlpha (major ? 0.14f : 0.06f));
+            g.drawVerticalLine ((int) xFor (f), plot.getY(), plot.getBottom());
+            if (major)
+            {
+                g.setColour (ink.withAlpha (0.5f));
+                g.drawText (f >= 1000.0 ? juce::String ((int) (f / 1000.0)) + " kHz" : juce::String ((int) f) + " Hz",
+                            juce::Rectangle<float> (xFor (f) - 30.0f, labels.getY(), 60.0f, labels.getHeight()), juce::Justification::centred);
+            }
+        }
+        for (float db : { 0.0f, -20.0f, -40.0f })
+        {
+            g.setColour (ink.withAlpha (db == 0.0f ? 0.3f : 0.08f));
+            g.drawHorizontalLine ((int) yFor (db), plot.getX(), plot.getRight());
+            g.setColour (ink.withAlpha (0.45f));
+            g.drawText (juce::String ((int) db) + " dB", juce::Rectangle<float> (plot.getX() + 2.0f, yFor (db) - 12.0f, 50.0f, 11.0f), juce::Justification::left);
+        }
+
+        juce::Path line;
+        for (float px = 0.0f; px <= plot.getWidth(); px += 2.0f)
+        {
+            const double f = juce::jmin (sr * 0.49, 20.0 * std::pow (1000.0, (double) (px / plot.getWidth())));
+            const float db = order * (hp.magnitudeDb (sr, f) + lp.magnitudeDb (sr, f)) + k1.magnitudeDb (sr, f) + k2.magnitudeDb (sr, f) + level;
+            if (px == 0.0f) line.startNewSubPath (plot.getX(), yFor (db)); else line.lineTo (plot.getX() + px, yFor (db));
+        }
+        juce::Path fill (line);
+        fill.lineTo (plot.getRight(), plot.getBottom()); fill.lineTo (plot.getX(), plot.getBottom()); fill.closeSubPath();
+        g.setColour (acc.withAlpha (0.16f));
+        g.fillPath (fill);
+        g.setColour (acc);
+        g.strokePath (line, juce::PathStrokeType (2.0f));
+    }
+
+private:
+    const CurveState& cs;
+};
+
+class TimpanoEditor : public mye::SectionEditor
+{
+public:
+    explicit TimpanoEditor (TimpanoProcessor& p)
+        : SectionEditor (p, mye::utf8 ("TÍMPANO"), mye::utf8 ("M.Y.E. · puntos de escucha"),
+          {
+              { "ESCENA", { { "transition", mye::utf8 ("Transición"), Kind::knob }, { "scene", "", Kind::choice } }, 2 },
+              { "FRECUENCIAS", { { "lowcut", "Corte grave", Kind::knob }, { "highcut", "Corte agudo", Kind::knob },
+                                 { "resfreq", "Resonancia", Kind::knob }, { "resgain", "Realce", Kind::knob } } },
+              { "LUGAR",  { { "distance", "Distancia", Kind::knob }, { "material", "Material / calidad", Kind::knob },
+                            { "space", "Espacio", Kind::knob }, { "defect", "Defecto", Kind::knob } } },
+              { "CUERPO", { { "tinnitus", mye::utf8 ("Acúfeno"), Kind::knob }, { "pulse", "Pulso", Kind::knob }, { "pulsebpm", "Pulso bpm", Kind::knob } } },
+              { "SALIDA", { { "output", "Salida", Kind::knob } } },
+          }),
+          curve (p.curve)
+    {
+        setExtraComponent (&curve, 180);
+    }
+
+private:
+    ResponseCurve curve;
+};
+
+juce::AudioProcessorEditor* TimpanoProcessor::createEditor() { return new TimpanoEditor (*this); }
 
 juce::AudioProcessor* createTimpano() { return new TimpanoProcessor(); }
 #ifndef MYE_TEST

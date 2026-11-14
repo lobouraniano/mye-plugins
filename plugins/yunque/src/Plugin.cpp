@@ -79,7 +79,7 @@ public:
         const float drive = mye::dbToGain (p ("heat"));
         const float materialTilt[] { 0.0f, 6.0f, -6.0f, 0.0f };   // tape saturates highs, transformer saturates lows
         const float shapeDb = juce::jlimit (-15.0f, 15.0f, p ("shape") / 100.0f * 9.0f + materialTilt[juce::jlimit (0, 3, kind)]);
-        const float bias = p ("asym") / 100.0f * 0.6f;
+        const float bias = p ("asym") / 100.0f * 0.9f;
         const float mix = p ("mix") / 100.0f;
         const float out = mye::dbToGain (p ("output"));
         const bool autoOn = p ("autogain") > 0.5f;

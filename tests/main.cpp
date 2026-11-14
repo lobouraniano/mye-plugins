@@ -99,10 +99,37 @@ static void noiseReport()
     }
 }
 
+static void transitionReport()
+{
+    printf ("Timpano 'Puerta', transition sweep (white noise in at -15.2 dB rms):\n");
+    for (float tr : { 0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 1.0f })
+    {
+        std::unique_ptr<juce::AudioProcessor> p (createTimpano());
+        for (auto* prm : p->getParameters())
+            if (auto* w = dynamic_cast<juce::AudioProcessorParameterWithID*> (prm))
+                if (w->paramID == "transition") prm->setValueNotifyingHost (tr);
+        p->prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; juce::Random r (7);
+        double all = 0, hi = 0, lpState = 0; long cnt = 0;
+        for (int k = 0; k < 48000 * 3 / 512; ++k)
+        {
+            for (int i = 0; i < 512; ++i) { const float x = (r.nextFloat() * 2 - 1) * 0.3f; b.setSample (0, i, x); b.setSample (1, i, x); }
+            p->processBlock (b, m);
+            if (k > 100) for (int i = 0; i < 512; ++i)
+            {
+                const double v = b.getSample (0, i); lpState += 0.123 * (v - lpState);      // ~1 kHz split
+                const double h = v - lpState; all += v * v; hi += h * h; ++cnt;
+            }
+        }
+        printf ("  %3.0f %%: total %6.1f dB   above 1 kHz %6.1f dB\n", tr * 100, 10 * std::log10 (all / cnt + 1e-12), 10 * std::log10 (hi / cnt + 1e-12));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
     noiseReport();
+    transitionReport();
     int f = run ("Estribo", createEstribo) + run ("Martillo", createMartillo) + run ("Yunque", createYunque) + run ("Timpano", createTimpano);
     printf (f == 0 ? "ALL OK\n" : "FAILURES: %d\n", f);
     return f == 0 ? 0 : 1;
